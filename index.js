@@ -1,54 +1,53 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const app = express();
-const bodyParser = require("body-parser");
+const {MongoClient} = require('mongodb')
+const dns = require("dns");
+const urlparser = require('url')
 
-// Basic Configuration
+const client = new MongoClient(process.env.DB_URL)
+const db = client.db("urlshortener")
+const urls = db.collection("urls")
+
+const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(bodyParser.urlencoded({ extended: false }));
-
-app.use("/public", express.static(`${process.cwd()}/public`));
-
-const urlDatabase = [];
-let currentId = 1;
+app.use(express.json())
+app.use(express.urlencoded({ extended: true }));
 
 
 app.post("/api/shorturl", (req, res) => {
-  const url = req.body.url; 
-  const regex = /^http:\/\/www\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/;
+  console.log(req.body)
+  const url = req.body.url;
 
-  if (!regex.test(url)) {
-    res.json({ error: 'invalid url' });
-  } 
+  const dnslookup = dns.lookup(urlparser.parse(url).hostname, async (err, address) => {
+    if(!address){
+      res.json({error: "Invalid URL"})
+    } else {
+      const urlCount = await urls.countDocuments({})
+      const urlDoc = {
+        url,
+        short_url: urlCount
+      }
 
-  const shortUrl = currentId;
-  urlDatabase.push({ url, shortUrl });
-  currentId++;
-
-
-  res.json({ original_url: url, short_url: shortUrl });
+      const result = await urls.insertOne(urlDoc)
+      console.log(result)
+      res.json({ original_url: url, short_url: urlCount });
+    }
+  })
 });
 
+app.get('/api/shorturl/:short_url', async (req, res) => {
+  const shorturl = req.params.short_url
+  const urlDoc = await urls.findOne({short_url: +shorturl})
+  res.redirect(urlDoc.url)
+})
 
 app.get("/", function (req, res) {
   res.sendFile(process.cwd() + "/views/index.html");
 });
 
-app.get("/api/shorturl/:short_url", function (req, res) {
-  const shortUrl = parseInt(req.params.short_url);
-
-  const urlEntry = urlDatabase.find(entry => entry.shortUrl === shortUrl);
-
-  if(urlEntry){
-    console.log(urlEntry);
-    res.redirect(urlEntry.url)
-  } else {
-    res.json({ error: "short_url not found" });
-  }
-});
 
 app.listen(port, function () {
   console.log(`Listening on port ${port}`);
